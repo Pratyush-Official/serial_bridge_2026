@@ -31,7 +31,7 @@ TEST_BYTE = 0xB2
 SIX_SEVENN = 0x67
 
 RECIEVE_SIZE = 1 + 4 + 1
-TRANSMIT_SIZE = 1 + 13 + 1
+TRANSMIT_SIZE = 1 + 18 + 1
 
 serial_baudrate = 115200
 
