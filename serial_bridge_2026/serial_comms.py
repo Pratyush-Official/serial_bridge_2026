@@ -5,7 +5,6 @@ import time
 import logging
 
 from serial_bridge_2026.crc8 import crc8
-
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
