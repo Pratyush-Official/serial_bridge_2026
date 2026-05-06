@@ -18,13 +18,14 @@ import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32MultiArray, Float64MultiArray, UInt8MultiArray
+from std_msgs.msg import Float32MultiArray, Float32, Float64MultiArray, UInt8MultiArray, Byte
 #from ros2_bno_msg.msg import BnoData
-from dev_pi_communicate.crc8 import crc8
-from dev_pi_communicate.serial_comms import serial_comms
+from serial_bridge_2026.crc8 import crc8
+from serial_bridge_2026.serial_comms import serial_comms
 from geometry_msgs.msg import Twist
+import threading
 
 START_BYTE = 0xA5
 TEST_BYTE = 0xB2
@@ -115,6 +116,11 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
             "CRC",
         )#write_serial_port is an object of serial_comms class
 
+        self.serial_connected = True
+        self.reconnect_delay = 0.5
+        self.last_reconnect_attempt = 0.0
+        self.serial_lock = threading.Lock()
+
         # self.read_serial_port = serial_comms(
         #     serial_port_stm,
         #     serial_baudrate,
@@ -123,27 +129,51 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         #     "CRC",
         # )
 
-        qos_profile = QoSProfile(depth=10)
-        qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
+        qos_profile_cmd = QoSProfile(depth=1)
+        qos_profile_cmd.reliability = QoSReliabilityPolicy.BEST_EFFORT
+        qos_profile_cmd.durability = QoSDurabilityPolicy.VOLATILE
+
+        qos_profile_sensor = QoSProfile(depth=10)
+        qos_profile_sensor.reliability = QoSReliabilityPolicy.BEST_EFFORT
+        qos_profile_sensor.durability = QoSDurabilityPolicy.VOLATILE
+
+        qos_profile_sensor_imu = QoSProfile(depth=1)
+        qos_profile_sensor_imu.reliability = QoSReliabilityPolicy.RELIABLE
+        qos_profile_sensor_imu.durability = QoSDurabilityPolicy.VOLATILE
         # qos_profile.lifespan = Duration(seconds=0.05)
 
-        # self.bno_publisher = self.create_publisher(BnoData, "bno_data", qos_profile) #Ros taking bno data thru disc
+        self.bno_publisher = self.create_publisher(Float32, "/imu_data", 10) #Ros taking bno data thru disc
         #self.cmd_vel_sub = self.create_subscription(Float32MultiArray, "cmd_robot_vel", self.send_cmd_vel_data, 10)#Float32MultiArray = message type, cmd_robot_vel = topic name
 
         #self.cmd_vel_sub = self.create_subscription(Float32MultiArray, "cmd_robot_vel", self.send_cmd_vel_data, 10)
-        self.motor_cmd_from_server = self.create_subscription(Twist, "/cmd_vel", self.cmd_driver_callback, 10) #Controlling robot through joystick parsing
+        self.motor_cmd_from_server = self.create_subscription(Twist, "/cmd_vel", self.cmd_driver_callback, qos_profile_cmd) #Controlling robot through joystick parsing
+        self.rear_wheel = self.create_subscription(Byte, "/rear_drive", self.rear_callback, qos_profile_cmd)
 
-        self.act_vel_msg = Float32MultiArray() #Float32MultiArray is a message class, whose instance is cmd_vel_msg
+        self.setpoint_sub = self.create_subscription(Float32MultiArray, "/setpoint_yaw", self.yaw_setpoint_callback, 10)
+        self.act_vel_msg = Float32MultiArray()
+
+        self.setpoint_msg = Float32MultiArray() #For bno setpoint
+        self.setpoint_msg.data = [0.0, 0.0]#Float32MultiArray is a message class, whose instance is cmd_vel_msg
+
         self.act_vel_last_rx_time_vel_rx_flag = False
         self.act_vel_msg.data = [0.0, 0.0, 0.0]
+
         self.cmd_vel_msg = Twist()
         self.cmd_vel_rx_flag = False
+
+        self.setpoint_msg = Float32MultiArray()
+        self.setpoint_msg.data = [0.0, 0.0]
+        self.setpoint_msg.data[1] = 0x42
+
         self.cmd_vel_msg.linear.x = 0.0
         self.cmd_vel_msg.linear.y = 0.0
         self.cmd_vel_msg.angular.z = 0.0
+        self.rear_msg = 0x00
+
         #self.act_vel_msg.data = [0, 0, 0]
+
         # self.timer2 = self.create_timer(0.015, self.Send_Data_CallBack)
-        self.timer1 = self.create_timer(0.001, self.serial_read_callback)
+        self.timer1 = self.create_timer(0.01, self.serial_read_callback)
 
         self.rx_data = [0.0] * 24
         self.x_offset = 0.0
@@ -153,6 +183,7 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         self.act_vel_last_rx_time = time.time()
         self.last_transmit_time = time.time()
         self.last_published_time = time.time()
+        self.data_none_count = 0
 
         self.get_logger().info("Serial bridge ready...")
 
@@ -172,34 +203,29 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
 
         # if now - self.act_vel_last_rx_time >= 0.05:
 
+        # _data = self.write_serial_port.read_data()
+        # if(_data is None):         
+        #     # print("data none")
+        #     self.data_none_count +=1
+        #     if(self.data_none_count >=10):
+        #         self.cmd_vel_msg.linear.x = 0.0
+        #         self.cmd_vel_msg.linear.y = 0.0
+        #         self.cmd_vel_msg.angular.z = 0.0
+        # print(f"Linear x value: {self.vx}")
+        print("Packet: ", {START_BYTE}, {self.cmd_vel_msg.linear.x}, {self.cmd_vel_msg.linear.y}, {self.cmd_vel_msg.angular.z}, {self.setpoint_msg.data[0]}, {self.setpoint_msg.data[1]}, {self.rear_msg & 0xFF})
         DataToSend = [ #Here the order of the data being sent is defined as well as their sizes and  types
             bytes(struct.pack("B", START_BYTE)),
-            # bytes(struct.pack("f", 0.01)),
             bytes(struct.pack("f", self.cmd_vel_msg.linear.x)),
             bytes(struct.pack("f", self.cmd_vel_msg.linear.y)),
             bytes(struct.pack("f", self.cmd_vel_msg.angular.z)),
-            bytes(struct.pack("B", SIX_SEVENN)),
+            bytes(struct.pack("f", self.setpoint_msg.data[0])),
+            bytes(struct.pack("B", int(self.setpoint_msg.data[1]) & 0xFF)),
+            bytes(struct.pack("B", self.rear_msg & 0xFF))
+            # bytes(struct.pack("B", SIX_SEVENN))
             # bytes(struct.pack("f", self.cmd_vel_msg.data[1])),
-            # bytes(struct.pack("f", self.cmd_vel_msg.data[2])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[0])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[1])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[2])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[3])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[4])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[5])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[6])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[7])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[8])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[9])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[10])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[11])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[12])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[13])),
-            # bytes(struct.pack("B", self.act_vel_msg.data[14])),
-
 
         ]
-        print(f"Motor commands being sent: {self.cmd_vel_msg.linear.x}, {self.cmd_vel_msg.linear.y}, {self.cmd_vel_msg.angular.z}"),
+        # print(f"Motor commands being sent: {self.cmd_vel_msg.linear.x}, {self.cmd_vel_msg.linear.y}, {self.cmd_vel_msg.angular.z}"),
         DataToSend = b"".join(DataToSend)#converts the list of bytes into a single bytes object
         data_hash = self.calculate_crc(DataToSend[1:])#CRC calculation for error checking in the MCU side after it recieves the data
         DataToSend = [DataToSend, bytes(struct.pack("B", data_hash))]#appends the CRC byte to the data being sent
@@ -208,7 +234,12 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         # print(f"{self.cmd_vel_msg.data[2]}")
         self.last_transmit_time = time.time()
 
-        self.write_serial_port.write_data(DataToSend)
+        try:
+            with self.serial_lock:
+                self.write_serial_port.write_data(DataToSend)
+        except Exception as e:
+            self.get_logger().error(f"Serial write error: {e}")
+            self.serial_connected = False
         self.cmd_vel_rx_flag = False
         self.act_vel_rx_flag = False
 
@@ -224,32 +255,59 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         self.act_vel_rx_flag = True
 
     def serial_read_callback(self):
+        # Auto reconnect if disconnected
+        if not self.serial_connected:
+            now = time.time()
+            if now - self.last_reconnect_attempt > self.reconnect_delay:
+                self.last_reconnect_attempt = now
+                try:
+                    self.get_logger().warn("Attempting serial reconnect...")
+                    with self.serial_lock:
+                        self.write_serial_port.close()
+                        time.sleep(0.2)
+                        self.write_serial_port = serial_comms(
+                            serial_port_ros,
+                            serial_baudrate,
+                            RECIEVE_SIZE,
+                            TRANSMIT_SIZE,
+                            "CRC",
+                        )
+                    self.serial_connected = True
+                    self.get_logger().info("Serial reconnected successfully.")
+                except Exception as e:
+                    self.get_logger().error(f"Reconnect failed: {e}")
+            return
         self.Send_Data_CallBack()
-        _data = self.write_serial_port.read_data()
+        try:
+            with self.serial_lock:
+                _data = self.write_serial_port.read_data()
+        except Exception as e:
+            self.get_logger().error(f"Serial read error: {e}")
+            self.serial_connected = False
+            _data = None
         if _data is not None:
-            """data = [yaw, pitch, roll, accel_x, accel_y,accel_z]""" #This format is correct
+            """data = [yaw]""" #This format is correct
 
-            print(len(_data[0:-1]), _data)
-            data = struct.unpack("<ffffff", _data[0:-1])
+            # print(len(_data[0:-1]), _data)
+            data = struct.unpack("<f", _data[0:-1])
             
-            print(f"IMU data: {data}")
+            # print(f"IMU data: {data[0]}")
             #self.rx_data = data
-            self.process_imu(data[0:3])
+            self.process_imu(data[0])
             # self.rx_data[1] = self.rx_data[1]
 
             # self.process_odom(self.rx_data[0:9])
-            # self.process_imu(self.rx_data[6:])
             now = time.time()
 
             delay = now - self.last_published_time
-            if delay >= 0.02:
-                print(f"{delay = }")
+            # if delay >= 0.02:
+            #     print(f"{delay = }")
             # print(f"{data =}")
 
             self.last_published_time = time.time()
+            self.data_none_count = 0
+        
 
-        # else:
-        #     print("data none")
 
     """
     data:[pos_x, pose_y, theta, vel_x, vel_y, vel_z]
@@ -364,22 +422,19 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
 
 
     def process_imu(self, data): #process_imu function to publish imu data
-        imu_msg = Imu()
-        yaw_rad = data[0] * M_PI / 180.0
-        qw, qx, qy, qz = self.rollpitchyaw_to_quaternion(0.0, 0.0, yaw_rad)
+        imu_msg = Float32()
+        # yaw_rad = data[0] * M_PI / 180.0
+        # qw, qx, qy, qz = self.rollpitchyaw_to_quaternion(0.0, 0.0, yaw_rad)
         #  Assign header values to the imu_msg
-        imu_msg.header.stamp = self.get_clock().now().to_msg()
-        imu_msg.header.frame_id = "base_link"
+        # imu_msg.header.stamp = self.get_clock().now().to_msg()
+        # imu_msg.header.frame_id = "base_link"
 
         # Assign actuall values to the imu_msg
-        imu_msg.orientation.w = qw
-        imu_msg.orientation.x = qx
-        imu_msg.orientation.y = qy
-        imu_msg.orientation.z = qz
-
-        imu_msg.angular_velocity.x = 0.0
-        imu_msg.angular_velocity.y = 0.0
-        imu_msg.angular_velocity.z = 0.0
+        imu_msg.data = data
+        # print("Yaw data: ",imu_msg.data)
+        # imu_msg.angular_velocity.x = 0.0
+        # imu_msg.angular_velocity.y = 0.0
+        # imu_msg.angular_velocity.z = 0.0
 
         # imu_msg.linear_acceleration.x = data[3]
         # imu_msg.linear_acceleration.y = data[4]
@@ -414,7 +469,7 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         # imu_msg.linear_acceleration_covariance[7] = 0.0
         # imu_msg.linear_acceleration_covariance[8] = 0.25
 
-        self.imu_publisher.publish(imu_msg)
+        self.bno_publisher.publish(imu_msg)
         # print(f"{data[0]=},{data[1]=}, {data[5]=}")
 
     def landmark_update_callback(self, msg: Float64MultiArray):
@@ -477,8 +532,20 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         return roll, pitch, yaw
 
     def cmd_driver_callback(self, msg: Twist):
-        self.cmd_vel_msg = msg
+        self.cmd_vel_msg = Twist()
+
+        self.cmd_vel_msg.linear.x = msg.linear.x
+        self.cmd_vel_msg.linear.y = msg.linear.y
+        self.cmd_vel_msg.angular.z = msg.angular.z
         print(f"Motor data recieved: {msg.linear.x}, {msg.linear.y}, {msg.angular.z}")
+
+    def yaw_setpoint_callback(self, msg: Float32MultiArray):
+        self.setpoint_msg = msg
+        # print(f"Recieved: {msg.data}")
+
+    def rear_callback(self, msg: Byte):
+        self.rear_msg = msg.data[0]
+
 
 def main(args=None):
     rclpy.init()
@@ -486,12 +553,16 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
+        pass
+    finally:
         if hasattr(node, "write_serial_port"):
-            node.write_serial_port.close()
+            try:
+                node.write_serial_port.close()
+            except:
+                pass
         node.destroy_node()
         rclpy.try_shutdown()
-        exit()
 
 
-if __name__ == "__main":
+if __name__ == "__main__":
     main()
