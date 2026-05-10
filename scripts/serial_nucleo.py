@@ -38,7 +38,7 @@ serial_baudrate = 115200
 
 M_PI = 3.14159265358979323846
 
-serial_port_ros = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_54A7002607-if00"
+serial_port_ros = "/dev/serial/by-id/usb-Silicon_Labs_ESP_TTL_ESP_TTL-if00-port0"
 
 #serial_port_ros = "/dev/serial/by-id/usb-Silicon_Labs_ESP_TTL_2_ESP_TTL_2-if00-port0"
 #serial_port_pico = "/dev/serial/by-id/usb-Raspberry_Pi_Pico_E661AC88633E5127-if00"
@@ -291,9 +291,9 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
             # print(len(_data[0:-1]), _data)
             data = struct.unpack("<f", _data[0:-1])
             
-            # print(f"IMU data: {data[0]}")
+            print(f"IMU data: {data[0]}")
             #self.rx_data = data
-            self.process_imu(data[0])
+            self.process_imu(data)
             # self.rx_data[1] = self.rx_data[1]
 
             # self.process_odom(self.rx_data[0:9])
@@ -430,7 +430,7 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         # imu_msg.header.frame_id = "base_link"
 
         # Assign actuall values to the imu_msg
-        imu_msg.data = data
+        imu_msg.data = data[0]
         # print("Yaw data: ",imu_msg.data)
         # imu_msg.angular_velocity.x = 0.0
         # imu_msg.angular_velocity.y = 0.0
@@ -470,7 +470,7 @@ class Serial_comms_TX_node(Node): #defines new node class, "Node" is the parent 
         # imu_msg.linear_acceleration_covariance[8] = 0.25
 
         self.bno_publisher.publish(imu_msg)
-        # print(f"{data[0]=},{data[1]=}, {data[5]=}")
+        # print(f"{data[0]=}")
 
     def landmark_update_callback(self, msg: Float64MultiArray):
         if msg.data[0] == X_HORIZONTAL_LINE:

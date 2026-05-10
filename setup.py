@@ -31,6 +31,7 @@ setup(
             'publisher_node = scripts.publisher:main',
             'subscriber_node = scripts.subscriber:main',
             'laptop_node = scripts.laptop_end:main',
+            'gpio_node = scripts.gpio_button:main'
         ],
     },
 )

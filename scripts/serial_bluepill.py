@@ -31,7 +31,7 @@ TRANSMIT_SIZE = 1 + 1 + 1
 serial_baudrate = 115200
 
 M_PI = 3.14159265358979323846
-serial_port_ros = "/dev/serial/by-id/usb-Silicon_Labs_ESP_TTL_2_ESP_TTL_2-if00-port0"
+serial_port_ros = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
 
 class Serial_comms_TX_node(Node): 
     def __init__(self):#constructor
@@ -436,13 +436,13 @@ class Serial_comms_TX_node(Node):
     def process_prox(self, data):
         self.prox_msg.data = bytes([data])  # correct
         self.prox_publisher.publish(self.prox_msg)
-        # print(f"Proximity data published: {prox_msg.data}")
+        print(f"Proximity data published: {self.prox_msg.data}")
 
     def process_odom(self, data):
         msg = Int32MultiArray()
         msg.data = [data[0], data[1]]
         self.odom_publisher.publish(msg)
-        # print(f"Raw odometry data published: {msg.data}")
+        print(f"Raw odometry data published: {msg.data}")
 
 def main(args=None):
     rclpy.init()
