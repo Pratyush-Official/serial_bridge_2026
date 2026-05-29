@@ -26,12 +26,16 @@ setup(
     entry_points={
         'console_scripts': [
 
-            'serial_nucleo = scripts.serial_nucleo:main',
-            'serial_bluepill = scripts.serial_bluepill:main',
+            # 'serial_nucleo = scripts.serial_nucleo:main',
+            # 'serial_bluepill = scripts.serial_bluepill:main',
             'publisher_node = scripts.publisher:main',
+            'serial_bridge_node = scripts.serial_bridge_node:main',
             'subscriber_node = scripts.subscriber:main',
             'laptop_node = scripts.laptop_end:main',
-            'gpio_node = scripts.gpio_button:main'
+            'gpio_node = scripts.gpio_button:main',
+            'teacher_node = scripts.teach_setpoint:main',
+            'cmd_multiplexer = scripts.cmd_multiplex:main',
+            'process_odom = scripts.process_odom:main'
         ],
     },
 )
