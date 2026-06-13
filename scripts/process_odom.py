@@ -119,9 +119,9 @@ class ProcessOdom(Node):
             return
 
         dist_x = float(-msg.data[0]) * DIST_PER_COUNT
-        dist_y = float( msg.data[1]) * DIST_PER_COUNT
+        dist_y = float(-msg.data[1]) * DIST_PER_COUNT
 
-        print(msg.data[0], msg.data[1])
+        print(dist_x, dist_y)
 
         out = Float32MultiArray()
         out.data = [dist_x, dist_y]
